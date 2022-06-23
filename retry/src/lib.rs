@@ -5,16 +5,16 @@ use std::time::Duration;
 use wasm_timer::Delay;
 
 pub async fn retry<T>(task: T) -> Result<T::Item, T::Error>
-where
-    T: Task,
+    where
+        T: Task,
 {
     retry_if(task, Always).await
 }
 
 pub async fn retry_if<T, C>(task: T, condition: C) -> Result<T::Item, T::Error>
-where
-    T: Task,
-    C: Condition<T::Error>,
+    where
+        T: Task,
+        C: Condition<T::Error>,
 {
     RetryPolicy::default().retry_if(task, condition).await
 }
@@ -75,11 +75,11 @@ impl Iterator for BackoffIter {
 
             let mut delay = self.delay.mul_f64(factor);
             #[cfg(feature = "rand")]
-            {
-                if self.jitter {
-                    delay = jitter(delay);
+                {
+                    if self.jitter {
+                        delay = jitter(delay);
+                    }
                 }
-            }
             if let Some(max_delay) = self.max_delay {
                 delay = min(delay, max_delay);
             }
@@ -122,7 +122,7 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    fn backoffs(&self) -> impl Iterator<Item = Duration> {
+    fn backoffs(&self) -> impl Iterator<Item=Duration> {
         self.backoff.iter(self)
     }
 
@@ -137,16 +137,16 @@ impl RetryPolicy {
     }
 
     pub async fn retry<T>(&self, task: T) -> Result<T::Item, T::Error>
-    where
-        T: Task,
+        where
+            T: Task,
     {
         self::retry_if(task, Always).await
     }
 
     pub async fn retry_if<T, C>(&self, task: T, condition: C) -> Result<T::Item, T::Error>
-    where
-        T: Task,
-        C: Condition<T::Error>,
+        where
+            T: Task,
+            C: Condition<T::Error>,
     {
         let mut backoffs = self.backoffs();
         let mut task = task;
@@ -191,8 +191,8 @@ impl<E> Condition<E> for Always {
 }
 
 impl<F, E> Condition<E> for F
-where
-    F: FnMut(&E) -> bool,
+    where
+        F: FnMut(&E) -> bool,
 {
     fn is_retryable(&mut self, error: &E) -> bool {
         self(error)
@@ -204,16 +204,16 @@ where
 pub trait Task {
     type Item;
     type Error: std::fmt::Debug;
-    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
+    type Fut: Future<Output=Result<Self::Item, Self::Error>>;
 
     fn call(&mut self) -> Self::Fut;
 }
 
 impl<F, Fut, I, E> Task for F
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<I, E>>,
-    E: std::fmt::Debug,
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output=Result<I, E>>,
+        E: std::fmt::Debug,
 {
     type Item = I;
     type Error = E;
@@ -255,11 +255,40 @@ mod tests {
         assert_relative_eq!(iter.next().unwrap().as_secs_f64(), 16.0);
     }
 
+    #[test]
+    fn always_is_always_retryable() {
+        assert!(Always.is_retryable(&()))
+    }
+
+    #[test]
+    fn closures_impl_condition() {
+        fn test(_: impl Condition<()>) {}
+        fn foo(_err: &()) -> bool {
+            true
+        }
+        test(foo);
+        test(|_err: &()| true);
+    }
+
+    #[test]
+    fn closures_impl_task() {
+        fn test(_: impl Task) {}
+        async fn foo() -> Result<u32, ()> { Ok(34) }
+        test(foo);
+        test(|| async { Ok::<u32, ()>(34) });
+    }
+
     #[tokio::test]
     async fn task_implemented_for_closure() {
         let f = || async { Ok::<u32, u32>(10) };
 
         retry(f).await.unwrap();
+    }
+
+    #[test]
+    fn retried_futures_are_send_when_tasks_are_send() {
+        fn test(_: impl Send) {}
+        test(RetryPolicy::default().retry(|| async { Ok::<u32, ()>(34) }))
     }
 
     #[tokio::test]
