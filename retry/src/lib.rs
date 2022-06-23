@@ -5,25 +5,21 @@ use std::time::Duration;
 use wasm_timer::Delay;
 
 pub async fn retry<T>(task: T) -> Result<T::Item, T::Error>
-    where
-        T: Task,
+where
+    T: Task,
 {
     retry_if(task, Always).await
 }
 
-pub async fn retry_if<T,C>(
-    task: T,
-    condition: C,
-)  -> Result<T::Item, T::Error>
+pub async fn retry_if<T, C>(task: T, condition: C) -> Result<T::Item, T::Error>
 where
     T: Task,
     C: Condition<T::Error>,
-
 {
-    RetryPolicy::default().retry_if(task,condition).await
+    RetryPolicy::default().retry_if(task, condition).await
 }
 
-#[derive(Clone,Copy)]
+#[derive(Clone, Copy)]
 enum Backoff {
     Fixed,
     Exponential { exponent: f64 },
@@ -31,26 +27,25 @@ enum Backoff {
 
 impl Default for Backoff {
     fn default() -> Self {
-        Backoff::Exponential { exponent: Backoff::DEFAULT_EXPONENT }
+        Backoff::Exponential {
+            exponent: Backoff::DEFAULT_EXPONENT,
+        }
     }
 }
 
 impl Backoff {
     const DEFAULT_EXPONENT: f64 = 2.0;
 
-    fn iter(
-        self,
-        policy: &RetryPolicy,
-    ) -> BackoffIter {
-       BackoffIter {
-           backoff: self,
-           current: 1.0,
-           #[cfg(feature = "rand")]
-           jitter: policy.jitter,
-           delay: policy.delay,
-           max_delay: policy.max_delay,
-           max_retries: policy.max_retries,
-       }
+    fn iter(self, policy: &RetryPolicy) -> BackoffIter {
+        BackoffIter {
+            backoff: self,
+            current: 1.0,
+            #[cfg(feature = "rand")]
+            jitter: policy.jitter,
+            delay: policy.delay,
+            max_delay: policy.max_delay,
+            max_retries: policy.max_retries,
+        }
     }
 }
 
@@ -80,11 +75,11 @@ impl Iterator for BackoffIter {
 
             let mut delay = self.delay.mul_f64(factor);
             #[cfg(feature = "rand")]
-                {
-                    if self.jitter {
-                        delay = jitter(delay);
-                    }
+            {
+                if self.jitter {
+                    delay = jitter(delay);
                 }
+            }
             if let Some(max_delay) = self.max_delay {
                 delay = min(delay, max_delay);
             }
@@ -105,7 +100,7 @@ fn jitter(duration: Duration) -> Duration {
 /// A template for configuring retry behavior
 #[derive(Clone)]
 pub struct RetryPolicy {
-   backoff: Backoff,
+    backoff: Backoff,
     #[cfg(feature = "rand")]
     jitter: bool,
     delay: Duration,
@@ -115,14 +110,14 @@ pub struct RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
-       Self {
-           backoff: Backoff::default(),
-           delay: Duration::from_secs(1),
-           #[cfg(feature = "rand")]
-           jitter: false,
-           max_delay: None,
-           max_retries: 5,
-       }
+        Self {
+            backoff: Backoff::default(),
+            delay: Duration::from_secs(1),
+            #[cfg(feature = "rand")]
+            jitter: false,
+            max_delay: None,
+            max_retries: 5,
+        }
     }
 }
 
@@ -133,27 +128,22 @@ impl RetryPolicy {
 
     pub fn exponential(delay: Duration) -> Self {
         Self {
-            backoff: Backoff::Exponential { exponent: Backoff::DEFAULT_EXPONENT },
+            backoff: Backoff::Exponential {
+                exponent: Backoff::DEFAULT_EXPONENT,
+            },
             delay,
             ..Self::default()
         }
     }
 
-    pub async fn retry<T>(
-        &self,
-        task: T,
-    ) -> Result<T::Item, T::Error>
+    pub async fn retry<T>(&self, task: T) -> Result<T::Item, T::Error>
     where
         T: Task,
     {
         self::retry_if(task, Always).await
     }
 
-    pub async fn retry_if<T,C>(
-        &self,
-        task: T,
-        condition: C,
-    ) -> Result<T::Item, T::Error>
+    pub async fn retry_if<T, C>(&self, task: T, condition: C) -> Result<T::Item, T::Error>
     where
         T: Task,
         C: Condition<T::Error>,
@@ -172,15 +162,15 @@ impl RetryPolicy {
                         //   * If it does, control the duration of the delay.
                         if let Some(delay) = backoffs.next() {
                             tracing::trace!(
-                               "task failed with error {err:?}. will try again in  {delay:?}"
-                           );
+                                "task failed with error {err:?}. will try again in  {delay:?}"
+                            );
                             let _ = Delay::new(delay).await;
                             continue;
                         }
                     }
                     Err(err)
                 }
-            }
+            };
         }
     }
 }
@@ -189,10 +179,7 @@ impl RetryPolicy {
 /// A implementation is provided for `Fn(&Err) -> bool` allowing yout
 /// to use a simple closure or fn handles
 pub trait Condition<E> {
-   fn is_retryable(
-       &mut self,
-       error: &E,
-   ) -> bool;
+    fn is_retryable(&mut self, error: &E) -> bool;
 }
 
 struct Always;
@@ -203,8 +190,9 @@ impl<E> Condition<E> for Always {
     }
 }
 
-impl<F,E> Condition<E> for F
-where F: FnMut(&E) -> bool,
+impl<F, E> Condition<E> for F
+where
+    F: FnMut(&E) -> bool,
 {
     fn is_retryable(&mut self, error: &E) -> bool {
         self(error)
@@ -216,16 +204,16 @@ where F: FnMut(&E) -> bool,
 pub trait Task {
     type Item;
     type Error: std::fmt::Debug;
-    type Fut: Future<Output=Result<Self::Item, Self::Error>>;
+    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
 
     fn call(&mut self) -> Self::Fut;
 }
 
 impl<F, Fut, I, E> Task for F
-    where
-        F: FnMut() -> Fut,
-        Fut: Future<Output=Result<I, E>>,
-        E: std::fmt::Debug,
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<I, E>>,
+    E: std::fmt::Debug,
 {
     type Item = I;
     type Error = E;
@@ -251,7 +239,7 @@ mod tests {
     #[test]
     fn backoff_default() {
         if let Backoff::Exponential { exponent } = Backoff::default() {
-           assert_relative_eq!(exponent, 2.0);
+            assert_relative_eq!(exponent, 2.0);
         } else {
             panic!("Default backoff expected to be exponential");
         }
@@ -277,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn ok_futures_yield_ok() -> Result<(), Box<dyn Error>> {
         let result = RetryPolicy::default()
-            .retry(|| async { Ok::<u32,()>(34)})
+            .retry(|| async { Ok::<u32, ()>(34) })
             .await;
         assert_eq!(result, Ok(34));
         Ok(())
