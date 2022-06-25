@@ -1,2 +1,2 @@
 [workspace]
-members = ["retry"]
+members = ["retry", "tracing-init"]
