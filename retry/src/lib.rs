@@ -5,16 +5,16 @@ use std::time::Duration;
 use wasm_timer::Delay;
 
 pub async fn retry<T>(task: T) -> Result<T::Item, T::Error>
-    where
-        T: Task,
+where
+    T: Task,
 {
     retry_if(task, Always).await
 }
 
 pub async fn retry_if<T, C>(task: T, condition: C) -> Result<T::Item, T::Error>
-    where
-        T: Task,
-        C: Condition<T::Error>,
+where
+    T: Task,
+    C: Condition<T::Error>,
 {
     RetryPolicy::default().retry_if(task, condition).await
 }
@@ -75,11 +75,11 @@ impl Iterator for BackoffIter {
 
             let mut delay = self.delay.mul_f64(factor);
             #[cfg(feature = "rand")]
-                {
-                    if self.jitter {
-                        delay = jitter(delay);
-                    }
+            {
+                if self.jitter {
+                    delay = jitter(delay);
                 }
+            }
             if let Some(max_delay) = self.max_delay {
                 delay = min(delay, max_delay);
             }
@@ -122,7 +122,7 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    fn backoffs(&self) -> impl Iterator<Item=Duration> {
+    fn backoffs(&self) -> impl Iterator<Item = Duration> {
         self.backoff.iter(self)
     }
 
@@ -136,17 +136,25 @@ impl RetryPolicy {
         }
     }
 
+    pub fn fixed(delay: Duration) -> Self {
+        Self {
+            backoff: Backoff::Fixed,
+            delay,
+            ..Self::default()
+        }
+    }
+
     pub async fn retry<T>(&self, task: T) -> Result<T::Item, T::Error>
-        where
-            T: Task,
+    where
+        T: Task,
     {
         self::retry_if(task, Always).await
     }
 
     pub async fn retry_if<T, C>(&self, task: T, condition: C) -> Result<T::Item, T::Error>
-        where
-            T: Task,
-            C: Condition<T::Error>,
+    where
+        T: Task,
+        C: Condition<T::Error>,
     {
         let mut backoffs = self.backoffs();
         let mut task = task;
@@ -173,10 +181,111 @@ impl RetryPolicy {
             };
         }
     }
+
+    pub async fn collect<T, C, S>(
+        &self,
+        task: T,
+        condition: C,
+        start_value: S,
+    ) -> Result<Vec<T::Item>, T::Error>
+    where
+        T: TaskWithParameter<S>,
+        C: SuccessCondition<T::Item, S>,
+    {
+        let mut backoffs = self.backoffs();
+        let mut condition = condition;
+        let mut task = task;
+        let mut results = vec![];
+        let mut input = start_value;
+
+        loop {
+            return match task.call(input).await {
+                Ok(item) => {
+                    let maybe_new_input = condition.retry_with(&item);
+                    results.push(item);
+
+                    if let Some(new_input) = maybe_new_input {
+                        if let Some(delay) = backoffs.next() {
+                            tracing::trace!(
+                                "task succeeded and condition is met. will run again in {delay:?}"
+                            );
+
+                            let _ = Delay::new(delay).await;
+                            input = new_input;
+                            continue;
+                        }
+                    }
+
+                    // condition indicate to stop collect or max retries exceeded.
+                    Ok(results)
+                }
+                Err(err) => Err(err),
+            };
+        }
+    }
+
+    pub async fn collect_and_retry<T, C, D, S>(
+        &self,
+        task: T,
+        success_condition: C,
+        error_condition: D,
+        start_value: S,
+    ) -> Result<Vec<T::Item>, T::Error>
+    where
+        T: TaskWithParameter<S>,
+        C: SuccessCondition<T::Item, S>,
+        D: Condition<T::Error>,
+        S: Clone,
+    {
+        let mut success_backoffs = self.backoffs();
+        let mut error_backoffs = self.backoffs();
+        let mut success_condition = success_condition;
+        let mut error_condition = error_condition;
+        let mut task = task;
+        let mut results = vec![];
+        let mut input = start_value.clone();
+        let mut last_result = start_value;
+
+        loop {
+            return match task.call(input).await {
+                Ok(item) => {
+                    let maybe_new_input = success_condition.retry_with(&item);
+                    results.push(item);
+
+                    if let Some(new_input) = maybe_new_input {
+                        if let Some(delay) = success_backoffs.next() {
+                            tracing::trace!(
+                                "task succeeded and condition is met. will run again in {delay:?}"
+                            );
+                            let _ = Delay::new(delay).await;
+                            input = new_input.clone();
+                            last_result = new_input;
+                            continue;
+                        }
+                    }
+
+                    Ok(results)
+                }
+                Err(err) => {
+                    if error_condition.is_retryable(&err) {
+                        if let Some(delay) = error_backoffs.next() {
+                            tracing::trace!(
+                                "task failed with error {err:?}. will retry again in {delay:?}"
+                            );
+                            let _ = Delay::new(delay).await;
+                            input = last_result.clone();
+                            continue;
+                        }
+                    }
+                    Err(err)
+                }
+            };
+        }
+    }
 }
 
 /// A type to determine if a failed Future should be retried
-/// A implementation is provided for `Fn(&Err) -> bool` allowing yout
+/// A implementation is provided for `Fn(&Err) -> bool` allowing you
 /// to use a simple closure or fn handles
 pub trait Condition<E> {
     fn is_retryable(&mut self, error: &E) -> bool;
@@ -191,11 +300,27 @@ impl<E> Condition<E> for Always {
 }
 
 impl<F, E> Condition<E> for F
-    where
-        F: FnMut(&E) -> bool,
+where
+    F: FnMut(&E) -> bool,
 {
     fn is_retryable(&mut self, error: &E) -> bool {
         self(error)
+    }
+}
+
+/// A type to determine if a successful Future should be retried
+/// A implementation is provided for `Fn(&Result) -> Option<S>`, where S
+/// represents the next input value.
+pub trait SuccessCondition<R, S> {
+    fn retry_with(&mut self, result: &R) -> Option<S>;
+}
+
+impl<F, R, S> SuccessCondition<R, S> for F
+where
+    F: Fn(&R) -> Option<S>,
+{
+    fn retry_with(&mut self, result: &R) -> Option<S> {
+        self(result)
     }
 }
 
@@ -204,16 +329,16 @@ impl<F, E> Condition<E> for F
 pub trait Task {
     type Item;
     type Error: std::fmt::Debug;
-    type Fut: Future<Output=Result<Self::Item, Self::Error>>;
+    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
 
     fn call(&mut self) -> Self::Fut;
 }
 
 impl<F, Fut, I, E> Task for F
-    where
-        F: FnMut() -> Fut,
-        Fut: Future<Output=Result<I, E>>,
-        E: std::fmt::Debug,
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<I, E>>,
+    E: std::fmt::Debug,
 {
     type Item = I;
     type Error = E;
@@ -221,6 +346,29 @@ impl<F, Fut, I, E> Task for F
 
     fn call(&mut self) -> Self::Fut {
         self()
+    }
+}
+
+/// A unit of work to be retried, that accepts a parameter
+/// A implementation is provided for `FnMut() -> Future`
+pub trait TaskWithParameter<P> {
+    type Item;
+    type Error: std::fmt::Debug;
+    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
+    fn call(&mut self, parameter: P) -> Self::Fut;
+}
+
+impl<F, P, Fut, I, E> TaskWithParameter<P> for F
+where
+    F: FnMut(P) -> Fut,
+    Fut: Future<Output = Result<I, E>>,
+    E: std::fmt::Debug,
+{
+    type Item = I;
+    type Error = E;
+    type Fut = Fut;
+    fn call(&mut self, parameter: P) -> Self::Fut {
+        self(parameter)
     }
 }
 
@@ -273,9 +421,21 @@ mod tests {
     #[test]
     fn closures_impl_task() {
         fn test(_: impl Task) {}
-        async fn foo() -> Result<u32, ()> { Ok(34) }
+        async fn foo() -> Result<u32, ()> {
+            Ok(34)
+        }
         test(foo);
         test(|| async { Ok::<u32, ()>(34) });
+    }
+
+    #[test]
+    fn closures_impl_task_with_param() {
+        fn test<P>(_: impl TaskWithParameter<P>) {}
+        async fn foo(p: u32) -> Result<u32, ()> {
+            Ok(p + 1)
+        }
+        test(foo);
+        test(|p: u32| async move { Ok::<u32, ()>(p + 1) })
     }
 
     #[tokio::test]
@@ -289,6 +449,97 @@ mod tests {
     fn retried_futures_are_send_when_tasks_are_send() {
         fn test(_: impl Send) {}
         test(RetryPolicy::default().retry(|| async { Ok::<u32, ()>(34) }))
+    }
+
+    #[tokio::test]
+    async fn collect_retries_when_condition_is_met() -> Result<(), Box<dyn Error>> {
+        let result = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect(
+                |input: u32| async move { Ok::<u32, ()>(input + 1) },
+                |result: &u32| if *result < 2 { Some(*result) } else { None },
+                0_u32,
+            )
+            .await;
+        assert_eq!(result, Ok(vec![1, 2]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_does_not_retry_when_condition_is_not_met() -> Result<(), Box<dyn Error>> {
+        let result = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect(
+                |input: u32| async move { Ok::<u32, ()>(input + 1) },
+                |result: &u32| if *result < 1 { Some(*result) } else { None },
+                0_u32,
+            )
+            .await;
+        assert_eq!(result, Ok(vec![1]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_and_retry_retries_when_success_condition_is_met() -> Result<(), Box<dyn Error>>
+    {
+        let result = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect_and_retry(
+                |input: u32| async move { Ok::<u32, u32>(input + 1) },
+                |result: &u32| if *result < 2 { Some(*result) } else { None },
+                |err: &u32| *err > 1,
+                0 as u32,
+            )
+            .await;
+        assert_eq!(result, Ok(vec![1, 2]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_and_retry_does_not_retry_when_success_condition_is_not_met(
+    ) -> Result<(), Box<dyn Error>> {
+        let result = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect_and_retry(
+                |input: u32| async move { Ok::<u32, u32>(input + 1) },
+                |result: &u32| if *result < 1 { Some(*result) } else { None },
+                |err: &u32| *err > 1,
+                0 as u32,
+            )
+            .await;
+        assert_eq!(result, Ok(vec![1]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_and_retry_retries_when_error_condition_is_met() -> Result<(), Box<dyn Error>> {
+        let mut task_ran = 0;
+        let _ = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect_and_retry(
+                |_input: u32| {
+                    task_ran += 1;
+                    async move { Err::<u32, u32>(0) }
+                },
+                |result: &u32| if *result < 2 { Some(*result) } else { None },
+                |err: &u32| *err == 0,
+                0 as u32,
+            )
+            .await;
+        // Default for retry policy is 5, so we end up with the task being
+        // retries 5 times and being run 6 times.
+        assert_eq!(task_ran, 6);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn collect_and_retry_does_not_retry_when_error_condition_is_not_met(
+    ) -> Result<(), Box<dyn Error>> {
+        let result = RetryPolicy::fixed(Duration::from_millis(1))
+            .collect_and_retry(
+                |input: u32| async move { Err::<u32, u32>(input + 1) },
+                |result: &u32| if *result < 1 { Some(*result) } else { None },
+                |err: &u32| *err > 1,
+                0 as u32,
+            )
+            .await;
+        assert_eq!(result, Err(1));
+        Ok(())
     }
 
     #[tokio::test]
