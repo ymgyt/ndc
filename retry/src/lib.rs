@@ -1,21 +1,21 @@
-use rand::{distributions::OpenClosed01, thread_rng, Rng};
 use std::cmp::min;
 use std::future::Future;
 use std::time::Duration;
 
+use rand::{distributions::OpenClosed01, thread_rng, Rng};
 use wasm_timer::Delay;
 
 pub async fn retry<T>(task: T) -> Result<T::Item, T::Error>
-where
-    T: Task,
+    where
+        T: Task,
 {
     retry_if(task, Always).await
 }
 
 pub async fn retry_if<T, C>(task: T, condition: C) -> Result<T::Item, T::Error>
-where
-    T: Task,
-    C: Condition<T::Error>,
+    where
+        T: Task,
+        C: Condition<T::Error>,
 {
     RetryPolicy::default().retry_if(task, condition).await
 }
@@ -76,11 +76,11 @@ impl Iterator for BackoffIter {
 
             let mut delay = self.delay.mul_f64(factor);
             #[cfg(feature = "rand")]
-            {
-                if self.jitter {
-                    delay = jitter(delay);
+                {
+                    if self.jitter {
+                        delay = jitter(delay);
+                    }
                 }
-            }
             if let Some(max_delay) = self.max_delay {
                 delay = min(delay, max_delay);
             }
@@ -126,7 +126,7 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    fn backoffs(&self) -> impl Iterator<Item = Duration> {
+    fn backoffs(&self) -> impl Iterator<Item=Duration> {
         self.backoff.iter(self)
     }
 
@@ -171,16 +171,16 @@ impl RetryPolicy {
     }
 
     pub async fn retry<T>(&self, task: T) -> Result<T::Item, T::Error>
-    where
-        T: Task,
+        where
+            T: Task,
     {
         self::retry_if(task, Always).await
     }
 
     pub async fn retry_if<T, C>(&self, task: T, condition: C) -> Result<T::Item, T::Error>
-    where
-        T: Task,
-        C: Condition<T::Error>,
+        where
+            T: Task,
+            C: Condition<T::Error>,
     {
         let mut backoffs = self.backoffs();
         let mut task = task;
@@ -214,9 +214,9 @@ impl RetryPolicy {
         condition: C,
         start_value: S,
     ) -> Result<Vec<T::Item>, T::Error>
-    where
-        T: TaskWithParameter<S>,
-        C: SuccessCondition<T::Item, S>,
+        where
+            T: TaskWithParameter<S>,
+            C: SuccessCondition<T::Item, S>,
     {
         let mut backoffs = self.backoffs();
         let mut condition = condition;
@@ -257,11 +257,11 @@ impl RetryPolicy {
         error_condition: D,
         start_value: S,
     ) -> Result<Vec<T::Item>, T::Error>
-    where
-        T: TaskWithParameter<S>,
-        C: SuccessCondition<T::Item, S>,
-        D: Condition<T::Error>,
-        S: Clone,
+        where
+            T: TaskWithParameter<S>,
+            C: SuccessCondition<T::Item, S>,
+            D: Condition<T::Error>,
+            S: Clone,
     {
         let mut success_backoffs = self.backoffs();
         let mut error_backoffs = self.backoffs();
@@ -326,8 +326,8 @@ impl<E> Condition<E> for Always {
 }
 
 impl<F, E> Condition<E> for F
-where
-    F: FnMut(&E) -> bool,
+    where
+        F: FnMut(&E) -> bool,
 {
     fn is_retryable(&mut self, error: &E) -> bool {
         self(error)
@@ -342,8 +342,8 @@ pub trait SuccessCondition<R, S> {
 }
 
 impl<F, R, S> SuccessCondition<R, S> for F
-where
-    F: Fn(&R) -> Option<S>,
+    where
+        F: Fn(&R) -> Option<S>,
 {
     fn retry_with(&mut self, result: &R) -> Option<S> {
         self(result)
@@ -355,16 +355,16 @@ where
 pub trait Task {
     type Item;
     type Error: std::fmt::Debug;
-    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
+    type Fut: Future<Output=Result<Self::Item, Self::Error>>;
 
     fn call(&mut self) -> Self::Fut;
 }
 
 impl<F, Fut, I, E> Task for F
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<I, E>>,
-    E: std::fmt::Debug,
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output=Result<I, E>>,
+        E: std::fmt::Debug,
 {
     type Item = I;
     type Error = E;
@@ -380,15 +380,15 @@ where
 pub trait TaskWithParameter<P> {
     type Item;
     type Error: std::fmt::Debug;
-    type Fut: Future<Output = Result<Self::Item, Self::Error>>;
+    type Fut: Future<Output=Result<Self::Item, Self::Error>>;
     fn call(&mut self, parameter: P) -> Self::Fut;
 }
 
 impl<F, P, Fut, I, E> TaskWithParameter<P> for F
-where
-    F: FnMut(P) -> Fut,
-    Fut: Future<Output = Result<I, E>>,
-    E: std::fmt::Debug,
+    where
+        F: FnMut(P) -> Fut,
+        Fut: Future<Output=Result<I, E>>,
+        E: std::fmt::Debug,
 {
     type Item = I;
     type Error = E;
@@ -524,8 +524,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_and_retry_does_not_retry_when_success_condition_is_not_met(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn collect_and_retry_does_not_retry_when_success_condition_is_not_met() -> Result<(), Box<dyn Error>> {
         let result = RetryPolicy::fixed(Duration::from_millis(1))
             .collect_and_retry(
                 |input: u32| async move { Ok::<u32, u32>(input + 1) },
@@ -559,8 +558,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collect_and_retry_does_not_retry_when_error_condition_is_not_met(
-    ) -> Result<(), Box<dyn Error>> {
+    async fn collect_and_retry_does_not_retry_when_error_condition_is_not_met() -> Result<(), Box<dyn Error>> {
         let result = RetryPolicy::fixed(Duration::from_millis(1))
             .collect_and_retry(
                 |input: u32| async move { Err::<u32, u32>(input + 1) },
