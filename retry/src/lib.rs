@@ -1,3 +1,4 @@
+use rand::{distributions::OpenClosed01, thread_rng, Rng};
 use std::cmp::min;
 use std::future::Future;
 use std::time::Duration;
@@ -93,8 +94,11 @@ impl Iterator for BackoffIter {
 
 #[cfg(feature = "rand")]
 fn jitter(duration: Duration) -> Duration {
-    // TODO:
-    duration
+    let jitter: f64 = thread_rng().sample(OpenClosed01);
+    let secs = (duration.as_secs() as f64) * jitter;
+    let nanos = (duration.subsec_nanos() as f64) * jitter;
+    let millis = (secs * 1_000_f64) + (nanos / 1_000_000_f64);
+    Duration::from_millis(millis as u64)
 }
 
 /// A template for configuring retry behavior
@@ -142,6 +146,28 @@ impl RetryPolicy {
             delay,
             ..Self::default()
         }
+    }
+
+    pub fn with_backoff_exponent(mut self, exp: f64) -> Self {
+        if let Backoff::Exponential { ref mut exponent } = self.backoff {
+            *exponent = exp
+        }
+        self
+    }
+
+    pub fn with_jitter(mut self, jitter: bool) -> Self {
+        self.jitter = jitter;
+        self
+    }
+
+    pub fn with_max_delay(mut self, max: Duration) -> Self {
+        self.max_delay = Some(max);
+        self
+    }
+
+    pub fn with_max_retries(mut self, max: usize) -> Self {
+        self.max_retries = max;
+        self
     }
 
     pub async fn retry<T>(&self, task: T) -> Result<T::Item, T::Error>
@@ -382,6 +408,11 @@ mod tests {
     fn retry_policy_is_send() {
         fn test(_: impl Send) {}
         test(RetryPolicy::default())
+    }
+
+    #[test]
+    fn jitter_adds_variance_to_durations() {
+        assert_ne!(jitter(Duration::from_secs(1)), Duration::from_secs(1))
     }
 
     #[test]
