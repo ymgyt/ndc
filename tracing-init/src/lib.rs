@@ -2,10 +2,10 @@
 #[derive(Debug)]
 pub struct Parameter<'a> {
     /// Default RUST_LOG.
-    directive_env_key: &'a str,
-    display_source: bool,
-    display_target: bool,
-    color: bool,
+    pub directive_env_key: &'a str,
+    pub display_source: bool,
+    pub display_target: bool,
+    pub color: bool,
 }
 
 impl Default for Parameter<'_> {
