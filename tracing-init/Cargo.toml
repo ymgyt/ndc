@@ -2,6 +2,9 @@
 name = "tracing-init"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "initialize tracing subscriber"
+repository = "https://github.com/ymgyt/ndc"
 
 [dependencies.tracing-subscriber]
 version = "0.3"
